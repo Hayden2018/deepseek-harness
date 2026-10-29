@@ -7,6 +7,10 @@
   align-self: center;
 }
 
+:global([data-drawer]) .sessionHeader {
+  display: none;
+}
+
 .split {
   display: inline-flex;
   align-items: stretch;

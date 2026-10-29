@@ -45,7 +45,7 @@
   padding: 0;
 }
 
-:global([data-windows-titlebar]) .toggle {
+:global([data-windows-titlebar]):not(:has([data-drawer])) .toggle {
   position: fixed;
   top: calc((var(--dsh-windows-titlebar-height) - 28px) / 2);
   left: 12px;

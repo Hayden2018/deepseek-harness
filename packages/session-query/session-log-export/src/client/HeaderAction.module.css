@@ -1,3 +1,7 @@
+:global([data-drawer]) .headerMenu {
+  display: none;
+}
+
 /* The shared compact Button owns radius, height, and interaction fills. */
 .moreButton {
   flex: none;

@@ -7,6 +7,11 @@
  * the Conversation or a global panel. Each column occupant owns its Session
  * binding and reports the geometry it needs.
  *
+ * Below SIDEBAR_DRAWER_MAX the left column contributes no track: the same
+ * sidebar renders as a full-screen drawer over the frame (drawer.ts), driven by
+ * the existing narrow-expanded flag and dismissed by navigation, the scrim,
+ * or Escape. A frame-owned edge button opens it on every main page.
+ *
  * The right column is a track, not a box: its occupant draws its panel anchored
  * to the frame's right edge at the resolved normal width, and the
  * track only decides whether the centre makes room for it. The occupant reports
@@ -20,16 +25,19 @@ import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { Button, focusWithoutRing, IconChevronRightOutlineRegular, isBehindModal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SIDEBAR_DRAWER_MAX } from './drawer.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
+import drawerCss from './Drawer.module.css'
 
 /** Full composed props: runtime share + child-slot render share + store share. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
   & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
-  & PropsLocale<'common'>
+  & PropsLocale<'shortcuts.layout'>
 
 /** Center column grid item (session-body building block). */
 function CenterColumn(props: { children?: ReactNode }) {
@@ -40,6 +48,30 @@ function CenterColumn(props: { children?: ReactNode }) {
 function MainPanel({ usePanelInfo, renderSlot }: Pick<PropsRuntime<'root'>, 'usePanelInfo'> & PropsRenderSlots<'main'>) {
   const panelId = usePanelInfo(info => info.activePanelId)
   return renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })
+}
+
+/**
+ * Dismiss the narrow drawer when navigation replaces what the drawer was
+ * covering. A null-rendering child, like DocumentTitle: the frame itself stays
+ * unsubscribed from the session set and the panel selection.
+ */
+function DrawerDismissal({ open, close, useSessions, usePanelInfo }: {
+  open: boolean
+  close: () => void
+  useSessions: PropsRuntime<'root'>['useSessions']
+  usePanelInfo: PropsRuntime<'root'>['usePanelInfo']
+}) {
+  const activeSessionId = useSessions(state => Object.values(state.byId)
+    .find(session => (session.retainedBy.mainView ?? 0) > 0)?.id)
+  const activePanelId = usePanelInfo(info => info.activePanelId)
+  const navigation = `${activeSessionId ?? ''}|${activePanelId ?? ''}`
+  const previous = useRef(navigation)
+  useEffect(() => {
+    if (previous.current === navigation) return
+    previous.current = navigation
+    if (open) close()
+  }, [navigation, open, close])
+  return null
 }
 
 /**
@@ -128,6 +160,8 @@ export function AppFrame({
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
   const frameRef = useRef<HTMLDivElement | null>(null)
+  const sidebarRef = useRef<HTMLDivElement | null>(null)
+  const openerRef = useRef<HTMLButtonElement | null>(null)
   const viewport = layoutInfo.viewportWidth
 
   // Track the frame's own box (not the window): rAF-throttled ResizeObserver.
@@ -158,7 +192,9 @@ export function AppFrame({
   }, [actions])
 
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
+  const drawer = viewport < SIDEBAR_DRAWER_MAX
   const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0
+  const drawerOpen = drawer && !sidebarCollapsed
   const sidebarPreference = sidebarCollapsed
     ? 0
     : layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar
@@ -168,10 +204,15 @@ export function AppFrame({
   const darwin = document.documentElement.dataset.platform === 'darwin'
   const collapsedWidth = darwin
     || document.documentElement.hasAttribute('data-windows-titlebar') ? 0 : SIDEBAR_COLLAPSED
+  // The drawer leaves the grid for an overlay, so its column contributes no
+  // track in either state; the centre then keeps the space the rail used to hold.
+  const trackCollapsedWidth = drawer ? 0 : collapsedWidth
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
-  const normal = computeColumns(viewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth)
-  const cols = computeColumns(viewport, sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
+  const normalSidebar = drawer || (!layoutInfo.rightbarShown && narrow) ? 0 : sidebarPreference
+  const normal = computeColumns(viewport, normalSidebar, rightbarPreference, trackCollapsedWidth)
+  const trackSidebar = drawer ? 0 : sidebarPreference
+  const cols = computeColumns(viewport, trackSidebar, layoutInfo.rightbarTrack ? rightbarPreference : 0, trackCollapsedWidth)
   const colsRef = useRef(cols)
   colsRef.current = cols
   const rightbarWidth = useRef(normal.rightbar)
@@ -241,8 +282,36 @@ export function AppFrame({
   const rightbarMax = cols.rightbar === 0 ? 0 : clampWidth(rightbarPreference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO)
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
-    width: cols.sidebar,
-  }), [renderSlot, sidebarCollapsed, cols.sidebar])
+    // The drawer covers the frame, so its occupant lays out at the frame width
+    // rather than at the zero track the column contributes.
+    width: drawer ? viewport : cols.sidebar,
+  }), [renderSlot, sidebarCollapsed, cols.sidebar, drawer, viewport])
+  const closeDrawer = useCallback(() => { actions.closeDrawer() }, [actions])
+  const openDrawer = useCallback(() => { actions.toggleSidebar() }, [actions])
+  // Keyboard activation must not leave focus on a hidden opener or close button.
+  // The drawer container accepts focus without raising the mobile keyboard.
+  useEffect(() => {
+    if (!drawer) return
+    const sidebar = sidebarRef.current
+    const opener = openerRef.current
+    if (drawerOpen && opener !== null && document.activeElement === opener && sidebar !== null) {
+      focusWithoutRing(sidebar)
+    } else if (!drawerOpen && !layoutInfo.rightbarFullscreen && sidebar?.contains(document.activeElement)
+      && opener !== null && !isBehindModal(opener)) {
+      focusWithoutRing(opener)
+    }
+  }, [drawer, drawerOpen, layoutInfo.rightbarFullscreen])
+  // Escape dismisses the open drawer. A menu or dialog above it owns Escape
+  // and marks the event handled in its capture-phase listener.
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      actions.closeDrawer()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [drawerOpen, actions])
   const main = useMemo(() => (
     <MainPanel usePanelInfo={usePanelInfo} renderSlot={renderSlot} />
   ), [usePanelInfo, renderSlot])
@@ -271,13 +340,16 @@ export function AppFrame({
       data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
       data-dragging={dragging || undefined}
       data-animating={animating > 0 || undefined}
+      data-drawer={drawer || undefined}
+      data-layout-frame
     >
       <DocumentTitle
         productTitle={productTitle}
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
-      <div className={css.sidebarCol}>
+      {drawer && <DrawerDismissal open={drawerOpen} close={closeDrawer} useSessions={useSessions} usePanelInfo={usePanelInfo} />}
+      <div ref={sidebarRef} className={css.sidebarCol} tabIndex={drawer ? -1 : undefined} data-open={drawerOpen || undefined}>
         {sidebar}
       </div>
       <>
@@ -297,8 +369,34 @@ export function AppFrame({
           {leading}
         </div>
       )}
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {drawer && (
+        <>
+          <button
+            type="button"
+            className={drawerCss.scrim}
+            data-open={drawerOpen || undefined}
+            aria-label={t('close')}
+            onClick={closeDrawer}
+          />
+          <Tooltip label={t('drawer.open')} side="right" delayMs={500} disabled={drawerOpen || layoutInfo.rightbarFullscreen}>
+            <Button
+              ref={openerRef}
+              size="sm"
+              className={drawerCss.opener}
+              hidden={drawerOpen || layoutInfo.rightbarFullscreen}
+              aria-label={t('drawer.open')}
+              aria-expanded={drawerOpen}
+              data-sidebar-drawer-open
+              onClick={(event) => { if (!isBehindModal(event.currentTarget)) openDrawer() }}
+            >
+              <IconChevronRightOutlineRegular size={12} />
+            </Button>
+          </Tooltip>
+        </>
+      )}
+      {/* The collapsed rail is fixed-width: no resize handle while closed, and
+          the drawer has no border to drag. */}
+      {!sidebarCollapsed && !drawer && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
       {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
         <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
       )}

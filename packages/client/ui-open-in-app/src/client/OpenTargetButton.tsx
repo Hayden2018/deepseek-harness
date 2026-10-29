@@ -1,5 +1,5 @@
 /** Shared file and directory opener: one default action, application menu, and one reported outcome per gesture. */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   IconChevronDownOutlineRegular, IconFolderOpenOutlineRegular, IconRightUpOutlineRegular, Menu, Tooltip,
@@ -36,6 +36,8 @@ export interface OpenTargetButtonProps extends OpenTargetReporter {
   readonly busy?: boolean
   readonly loading?: boolean
   readonly prominent?: boolean
+  /** Session-header controls hide in the frame's narrow drawer presentation. */
+  readonly sessionHeader?: boolean | undefined
   readonly t: TranslateNS<typeof NS>
   /** Resolve every gesture to an outcome, including Host and transport failures; never reject. */
   readonly execute: (operation: OpenTargetOperation) => Promise<OpenInAppOutcome>
@@ -85,6 +87,18 @@ function ApplicationIcon({ source, size = 14 }: { source: string | null; size?: 
 export function OpenTargetButton(props: OpenTargetButtonProps): ReactNode {
   const { applications, defaultId, kind, t } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  const controlRef = useRef<HTMLDivElement>(null)
+  // An open portalled menu must close when its frame hides the header trigger.
+  useEffect(() => {
+    if (!menuOpen || !props.sessionHeader) return
+    const frame = controlRef.current?.closest('[data-layout-frame]')
+    if (frame == null) return
+    const dismiss = (): void => { if (frame.hasAttribute('data-drawer')) setMenuOpen(false) }
+    dismiss()
+    const observer = new MutationObserver(dismiss)
+    observer.observe(frame, { attributes: true, attributeFilter: ['data-drawer'] })
+    return () => { observer.disconnect() }
+  }, [menuOpen, props.sessionHeader])
   const { pending, act } = useOpenTargetGesture(props.execute, props.report)
   // Files open through an application whenever one is registered: the OS-marked
   // default when the Host reported one, else the first entry in the Shell's
@@ -112,7 +126,7 @@ export function OpenTargetButton(props: OpenTargetButtonProps): ReactNode {
       : <ApplicationIcon key={preferred?.icon} source={preferred?.icon ?? null} size={props.prominent ? 18 : 13} />
   return (
     <Menu
-      className={css.menuAnchor}
+      className={props.sessionHeader ? `${css.menuAnchor} ${css.sessionHeader}` : css.menuAnchor}
       open={menuOpen && !disabled && hasMenu}
       autoFocus
       portal
@@ -133,7 +147,7 @@ export function OpenTargetButton(props: OpenTargetButtonProps): ReactNode {
       }] : []}
       onSelect={(id) => { run(id === 'reveal' ? { kind: 'reveal' } : { kind: 'application', id: id.slice(4) }) }}
       anchor={(
-        <div className={css.split} data-open-target={kind} data-size={props.prominent ? 'large' : 'compact'}
+        <div ref={controlRef} className={css.split} data-open-target={kind} data-size={props.prominent ? 'large' : 'compact'}
           data-open-path={kind === 'file' && !props.prominent ? '' : undefined} data-state={disabled ? 'busy' : 'idle'}>
           <Tooltip portal label={primaryLabel} shortcutKeys={props.shortcut?.keys} side="bottom" delayMs={500}>
             <button type="button" className={css.main} disabled={disabled} aria-label={props.prominent ? undefined : primaryLabel}

@@ -105,7 +105,7 @@ export function apply(ctx: ClientContext): void {
   ) {
     const { sessionId, useSessions } = props
     const cwd = useSessions(state => state.byId[sessionId]?.cwd)
-    return cwd ? createElement(OpenInAppAction, { ...props, absolutePath: cwd }) : null
+    return cwd ? createElement(OpenInAppAction, { ...props, absolutePath: cwd, sessionHeader: true }) : null
   }
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',

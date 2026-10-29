@@ -288,3 +288,53 @@
 .overlayLayer > * {
   pointer-events: auto;
 }
+
+/* Narrow-frame drawer (drawer.ts decides the width): the column leaves the grid
+   for a full-screen overlay, so the remaining columns state their tracks
+   explicitly — an out-of-flow first column would otherwise let auto-placement
+   move the centre into the emptied first track. The slide moves `left` rather
+   than a transform: a transformed ancestor becomes the containing block of the
+   fixed-position descendants this column carries (the settings dialog and the
+   Windows caption controls), and would carry them off with the drawer. The
+   opaque fill also replaces macOS vibrancy, which has nothing to show through
+   while the drawer covers the window; the block sits last so it outranks the
+   platform variants of .sidebarCol at equal specificity. */
+.frame[data-drawer] > .sidebarCol {
+  position: fixed;
+  top: var(--dsh-frame-chrome-top, 0px);
+  bottom: 0;
+  left: -100%;
+  width: 100%;
+  z-index: 17;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: none;
+  visibility: hidden;
+  transition:
+    left var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+}
+
+.frame[data-drawer] > .sidebarCol[data-open] {
+  left: 0;
+  visibility: visible;
+  transition:
+    left var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s;
+}
+
+.frame[data-drawer] > .centerCol {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.frame[data-drawer] > .rightbarCol {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame[data-drawer] > .sidebarCol,
+  .frame[data-drawer] > .sidebarCol[data-open] {
+    transition: none;
+  }
+}

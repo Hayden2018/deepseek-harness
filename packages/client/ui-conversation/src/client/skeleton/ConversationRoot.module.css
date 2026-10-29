@@ -588,6 +588,14 @@
   z-index: 1;
 }
 
+/* The narrow frame's drawer opener sits at the frame's left edge, so the hero
+   stack pads in by one more clearance to clear it. border-box keeps the added
+   pad inside the width computed above. */
+[data-drawer] .composerHero {
+  box-sizing: border-box;
+  padding-left: var(--dsh-composer-side-clearance);
+}
+
 .heroWorkspaceRow {
   display: flex;
   align-items: center;

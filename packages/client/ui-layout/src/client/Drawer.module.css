@@ -1,0 +1,125 @@
+/*
+ * Narrow-frame sidebar drawer. The frame keeps its three tracks; below
+ * SIDEBAR_DRAWER_MAX the first one is zero and AppFrame.module.css lifts the
+ * column over the frame. This sheet owns the surfaces that sit beside that
+ * column — the scrim and the edge-button opener — and document-level drawer
+ * presentation.
+ */
+
+/* Scrim: covers the conversation while the drawer is open, and dismisses it.
+   Kept mounted (hidden) rather than unmounted so it fades with the column it
+   belongs to; `visibility` also keeps the closed button out of the tab order
+   and the accessibility tree. */
+.scrim {
+  position: absolute;
+  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
+  z-index: 16;
+  border: none;
+  padding: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  opacity: 0;
+  visibility: hidden;
+  cursor: default;
+  transition:
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+}
+
+.scrim[data-open] {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s;
+}
+
+/* The visible pill is 16px wide at the frame's left edge; its hit area doubles
+   to 32px through the pseudo-element, which belongs to the button for pointer
+   targeting. The strip therefore takes presses that would otherwise reach the
+   content controls underneath it, which the raised layer keeps it above. A
+   fullscreen right panel covers this control and suppresses it. */
+button.opener {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 21;
+  width: 16px;
+  height: 64px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-left: none;
+  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;
+  background: var(--dsw-specific-sidebar-fill);
+  color: var(--dsw-alias-label-secondary);
+  box-shadow: var(--dsw-shadow-lv1);
+  touch-action: manipulation;
+}
+
+button.opener::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 32px;
+}
+
+button.opener[hidden],
+:global(html:has([role='dialog'][aria-modal='true'])) button.opener {
+  display: none;
+}
+
+button.opener:focus-visible {
+  outline-offset: -2px;
+}
+
+button.opener:active {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+@media (hover: hover) {
+  button.opener:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+/* Ordinary action tooltips are auxiliary on touch devices. */
+@media (hover: none) {
+  button.opener:hover:not(:active) {
+    background: var(--dsw-specific-sidebar-fill);
+  }
+
+  button.opener + :global([role='tooltip']) {
+    display: none;
+  }
+}
+
+/* Chrome for Android owns the left and right edge swipe for history
+   navigation, and no script can cancel it; `overscroll-behavior` on the root
+   scroller is the one lever that stops the in-page back and forward gestures.
+   It has to reach the root element, where the scroll container lives for a
+   document that does not scroll, and it also leaves the right edge inert while
+   the drawer is closed. Gated to the drawer's width so wider frames keep their
+   ordinary navigation gesture. */
+@media (max-width: 599px) {
+  :global(html) {
+    overscroll-behavior-x: none;
+  }
+}
+
+/* The Settings dialog is a fixed-position overlay rendered inside this column,
+   so the closed drawer's `visibility: hidden` would take it down with the
+   drawer. Its content is fixed, not offset with the drawer, and the dialog has
+   its own keyboard entry point on a narrow frame; restoring the subtree keeps
+   that entry point working. The drawer's own rows stay off-screen either way. */
+[data-drawer] :global([data-slot='sidebar.settings']) {
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .scrim[data-open] {
+    transition: none;
+  }
+}

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
@@ -54,10 +54,23 @@ export function SessionLogDownloadHeaderAction(props: SessionLogDownloadHeaderPr
   const copying = useSessionMarkdownCopy(state => state.copying)
   const busy = entry?.status === 'downloading'
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Resizing into drawer mode dismisses the menu, not the command-owned dialog.
+  useEffect(() => {
+    if (!open) return
+    const frame = triggerRef.current?.closest('[data-layout-frame]')
+    if (frame == null) return
+    const dismiss = (): void => { if (frame.hasAttribute('data-drawer')) setOpen(false) }
+    dismiss()
+    const observer = new MutationObserver(dismiss)
+    observer.observe(frame, { attributes: true, attributeFilter: ['data-drawer'] })
+    return () => { observer.disconnect() }
+  }, [open])
 
   return (
     <>
       <Menu
+        className={css.headerMenu}
         open={open}
         align="end"
         dense
@@ -75,6 +88,7 @@ export function SessionLogDownloadHeaderAction(props: SessionLogDownloadHeaderPr
         }}
         anchor={(
           <Button
+            ref={triggerRef}
             size="sm"
             className={css.moreButton}
             aria-label={t('header.more')}

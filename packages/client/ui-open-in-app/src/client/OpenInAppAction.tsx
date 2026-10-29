@@ -24,7 +24,11 @@ export interface OpenInAppActionInjected extends OpenTargetReporter {
 export type OpenInAppActionProps =
   PropsLocale<typeof NS>
   & InjectFace<OpenInAppActionInjected>
-  & { absolutePath: string }
+  & {
+    absolutePath: string
+    /** True for the narrow-frame-hidden Session header; omitted for file-tree controls. */
+    sessionHeader?: boolean
+  }
 
 /**
  * Adapt the installed directory catalog to the shared opening control.
@@ -46,6 +50,7 @@ export function OpenInAppAction(props: OpenInAppActionProps): React.JSX.Element 
   return (
     <OpenTargetButton
       key={absolutePath} kind="directory" applications={apps} defaultId={preferred.id} failed={false} t={t}
+      sessionHeader={props.sessionHeader}
       busy={operation.phase === 'busy'} shortcut={shortcut} report={props.report}
       execute={async (operation) => {
         const id = operation.kind === 'application' ? operation.id : preferred.id

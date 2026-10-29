@@ -75,6 +75,17 @@ describe('createLayoutStore', () => {
     actions.setViewportWidth(980)
     expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
   })
+
+  it('closes the narrow drawer idempotently', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.setViewportWidth(980)
+    actions.toggleSidebar()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    actions.closeDrawer()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+    actions.closeDrawer()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+  })
 })
 
 describe('main panel selection', () => {
