@@ -33,6 +33,10 @@ body {
   --dsw-alias-settings-card-stroke: var(--dsw-alias-border-l4);
 }
 
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 [data-dsh-automatic-focus]:focus,
 [data-dsh-automatic-focus]:focus:focus-visible {
   outline: none;

@@ -369,13 +369,29 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 }
 
 async function main(): Promise<void> {
+  const development = !app.isPackaged
+  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
+  const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
+    : join(process.resourcesPath, 'icon.png')
+  if (process.platform === 'win32') {
+    const appId = development ? 'com.deepseek.harness.development'
+      : typeof manifest === 'object' && manifest !== null && 'dshDesktopAppId' in manifest ? manifest.dshDesktopAppId : undefined
+    if (typeof appId !== 'string' || appId.trim() === '')
+      throw new Error('desktop identity: application manifest requires dshDesktopAppId')
+    const applicationIcon = nativeImage.createFromPath(applicationIconPath)
+    if (applicationIcon.isEmpty()) throw new Error(`desktop identity: cannot load application icon at ${applicationIconPath}`)
+    app.setAppUserModelId(appId)
+    // Welcome and authentication windows do not use the workspace window factory.
+    const applyWindowIcon = (_event: Electron.Event, window: BrowserWindow): void => { window.setIcon(applicationIcon) }
+    app.on('browser-window-created', applyWindowIcon)
+    app.once('will-quit', () => { app.off('browser-window-created', applyWindowIcon) })
+  }
   const desktopSettings = await readDesktopSettings(app.getPath('userData'))
   void pruneCrashReports(app.getPath('logs'))
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
   const resources = runtimeResources()
   const paths = resolveDesktopPaths()
-  const development = !app.isPackaged
   const primaryRuntime = development
     ? developmentPrimaryRuntime()
     : join(process.resourcesPath, 'runtime', 'primary-runtime')
@@ -684,7 +700,6 @@ async function main(): Promise<void> {
     return startup
   }
 
-  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
   const packagedChannel = desktopUpdateChannel(manifest)
   const channelSettings = new DesktopUpdateSettings(app.getPath('userData'), packagedChannel)
   const initialChannel = await channelSettings.load()
@@ -1127,8 +1142,6 @@ async function main(): Promise<void> {
     updates.dispose()
   })
 
-  const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
-    : join(process.resourcesPath, 'icon.png')
   app.setAboutPanelOptions({
     applicationName: 'DeepSeek Harness',
     applicationVersion: app.getVersion(),
