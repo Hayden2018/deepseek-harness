@@ -163,6 +163,7 @@
 }
 
 .crumbCurrent {
+  max-width: 480px;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
   cursor: default;

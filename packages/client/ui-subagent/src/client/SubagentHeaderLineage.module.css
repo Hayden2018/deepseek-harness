@@ -33,7 +33,7 @@
 .switcherTrigger {
   gap: 4px;
   min-width: 0;
-  max-width: 244px;
+  max-width: 504px;
   font-size: 14px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
@@ -41,6 +41,7 @@
 }
 
 .ancestorSwitcherTrigger {
+  max-width: 244px;
   color: var(--dsw-alias-label-tertiary);
   font-weight: 400;
 }
