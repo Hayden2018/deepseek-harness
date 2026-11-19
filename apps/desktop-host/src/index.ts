@@ -29,6 +29,7 @@ interface DesktopWebStateRecord {
   readonly pid: number
   readonly ppid: number
   readonly port: number | undefined
+  readonly url: string
   readonly localTokenUrl: string
   readonly tokenUrl: string
 }
@@ -233,27 +234,35 @@ async function main(): Promise<void> {
     headers: { cookie: `dsh-desktop-session=${secret}` },
   })
   if ('rejection' in admission) throw new Error('Desktop authentication provider did not accept its startup credential')
-  const localOrigin = `${ctx.webServer.protocol}//127.0.0.1:${String(ctx.webServer.port)}/`
-  // Providers append their signed entry (the Token plugin its launch token); the
-  // Web exposure below still needs that token, so ask instead of building the URL here.
-  const entryUrl = (baseUrl: string): string => {
-    const entries: WebEntryUrl[] = []
-    ctx.emit(ctx.webServer, 'webserver/entry-url', baseUrl, entries)
-    return entries[0]?.url ?? baseUrl
-  }
-  const url = entryUrl(localOrigin)
+  const url = `${ctx.webServer.protocol}//127.0.0.1:${String(ctx.webServer.port)}/`
+  const injections = ctx.webServer.collectIndexInjections(admission.peer)
+  if (!canPublish()) return
   if (webExposure.stateFile !== undefined) {
-    await writeWebStateFile(webExposure.stateFile, {
+    const stateFile = webExposure.stateFile
+    ctx.effect(() => () => removeOwnedWebStateFile(stateFile, process.pid), 'desktop-host: web state file')
+  }
+  process.send?.({ type: 'ready', url, injections }, (error) => {
+    if (error !== null) {
+      console.error(error)
+      return
+    }
+    if (webExposure.stateFile === undefined || !canPublish()) return
+    // Electron authenticates with its private IPC cookie and rejects query parameters on
+    // `ready.url`; only the external Web launcher needs the Token provider's entry URLs.
+    const entryUrl = (baseUrl: string): string => {
+      const entries: WebEntryUrl[] = []
+      ctx.emit(ctx.webServer, 'webserver/entry-url', baseUrl, entries)
+      return entries[0]?.url ?? baseUrl
+    }
+    void writeWebStateFile(webExposure.stateFile, {
       pid: process.pid,
       ppid: process.ppid,
       port: ctx.webServer.port,
-      localTokenUrl: url,
-      tokenUrl: entryUrl(webExposure.publicUrl ?? localOrigin),
-    })
-  }
-  const injections = ctx.webServer.collectIndexInjections(admission.peer)
-  if (!canPublish()) return
-  process.send?.({ type: 'ready', url, injections }, (error) => { if (error !== null) console.error(error) })
+      url,
+      localTokenUrl: entryUrl(url),
+      tokenUrl: entryUrl(webExposure.publicUrl ?? url),
+    }).catch((writeError: unknown) => { console.error(writeError) })
+  })
 }
 
 if (import.meta.main) {
