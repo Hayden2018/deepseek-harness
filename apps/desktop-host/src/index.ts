@@ -1,13 +1,14 @@
 /** Launch the Desktop profile through the Web application and report its URL to Electron. */
 
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
+import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
 import { formatFatalDiagnostic } from './fatal-diagnostic.ts'
 import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
 import { runProfile } from '@deepseek-ai/dsh/profile-boot'
 import type {} from '@deepseek-ai/dsh-client-connection'
-import type {} from '@deepseek-ai/dsh-host-webserver'
+import type { WebEntryUrl } from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-deepseek-account'
 import { localDragResource } from './file-drag.ts'
 
@@ -17,6 +18,75 @@ import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOperationDiagnostics } from './operation-diagnostics.ts'
 import { DesktopAuthenticationEnd, receiveDesktopSecret } from './authentication.ts'
 import * as DesktopAuthentication from '@deepseek-ai/dsh-host-authentication-desktop'
+
+interface DesktopWebExposure {
+  readonly args: string[]
+  readonly publicUrl: string | undefined
+  readonly stateFile: string | undefined
+}
+
+interface DesktopWebStateRecord {
+  readonly pid: number
+  readonly ppid: number
+  readonly port: number | undefined
+  readonly url: string
+  readonly localTokenUrl: string
+  readonly tokenUrl: string
+}
+
+const WINDOWS_RENAME_TRANSIENT_CODES: ReadonlySet<string> = new Set(['EACCES', 'EBUSY', 'EPERM'])
+
+function resolveDesktopWebExposure(env: NodeJS.ProcessEnv): DesktopWebExposure {
+  const rawPort = env.DSH_DESKTOP_WEB_PORT?.trim()
+  let port = '0'
+  if (rawPort !== undefined && rawPort !== '') {
+    const parsed = Number(rawPort)
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 65_535) {
+      throw new Error(`desktop-host: DSH_DESKTOP_WEB_PORT must be an integer from 0 through 65535, got ${JSON.stringify(rawPort)}`)
+    }
+    port = String(parsed)
+  }
+  const rawPublicUrl = env.DSH_DESKTOP_WEB_PUBLIC_URL?.trim()
+  const publicUrl = rawPublicUrl !== undefined && rawPublicUrl !== '' ? rawPublicUrl : undefined
+  const trustedHosts = (env.DSH_DESKTOP_WEB_TRUSTED_HOSTS ?? '').split(/[\s,]+/u).filter(Boolean)
+  const args = ['--no-open', '--host', '127.0.0.1', '--port', port]
+  if (publicUrl !== undefined) args.push('--public-url', publicUrl)
+  if (trustedHosts.length > 0) args.push('--trusted-host', ...trustedHosts)
+  const rawStateFile = env.DSH_DESKTOP_WEB_STATE_FILE?.trim()
+  const stateFile = rawStateFile !== undefined && rawStateFile !== '' ? rawStateFile : undefined
+  return { args, publicUrl, stateFile }
+}
+
+async function writeWebStateFile(path: string, record: DesktopWebStateRecord): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const staging = `${path}.${String(process.pid)}.${randomUUID()}.tmp`
+  try {
+    await writeFile(staging, `${JSON.stringify(record, undefined, 2)}\n`, { mode: 0o600, flag: 'wx' })
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(staging, path); break }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException | null)?.code ?? ''
+        if (process.platform !== 'win32' || !WINDOWS_RENAME_TRANSIENT_CODES.has(code) || attempt >= 6) throw error
+      }
+      await new Promise<void>((resolve) => { setTimeout(resolve, 25 * (attempt + 1)) })
+    }
+  } catch (error) {
+    await rm(staging, { force: true })
+    throw error
+  }
+}
+
+async function removeOwnedWebStateFile(path: string, ownerPid: number): Promise<void> {
+  let raw: string
+  try { raw = await readFile(path, 'utf8') }
+  catch (_readError) { /* Absent or unreadable state file during shutdown requires no removal. */ return }
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) }
+  catch (_parseError) { /* Unparsable state file cannot be verified as owned by this process. */ return }
+  if (typeof parsed !== 'object' || parsed === null || !('pid' in parsed) || parsed.pid !== ownerPid) return
+  try { await unlink(path) }
+  catch (_unlinkError) { /* Concurrent removal during shutdown already achieved the target state. */ }
+}
 
 async function main(): Promise<void> {
   const runId = randomUUID() as PluginOperationRunId
@@ -42,6 +112,7 @@ async function main(): Promise<void> {
   const projectDir = process.argv[3] as string
   // Set before the launch-environment snapshot and profile evaluation; empty means the payload sits beside the runtime directory.
   process.env.DSH_PRIMARY_RUNTIME = process.argv[4] || join(runtimeDir, '..', 'runtime', 'primary-runtime')
+  const webExposure = resolveDesktopWebExposure(process.env)
   const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
   const profile = loadProfileDirectory('dsh', projectDir, installAnchor)
   reportSkippedBundles('dsh', profile)
@@ -50,7 +121,7 @@ async function main(): Promise<void> {
     profile: 'desktop',
     resolvedProfile: { profile, installAnchor },
     patchFiles: [],
-    args: ['--no-open', '--host', '127.0.0.1', '--port', '0'],
+    args: webExposure.args,
     ...(process.argv[5] === undefined ? {} : {
       packageManager: {
         command: process.execPath,
@@ -76,6 +147,7 @@ async function main(): Promise<void> {
     // Startup failure is reported by main; shutdown only owns a tree that booted.
     const running = await application.catch(() => undefined)
     await running?.shutdown.shutdown(0)
+    if (webExposure.stateFile !== undefined) await removeOwnedWebStateFile(webExposure.stateFile, process.pid)
     await send({ type: 'shutdown-complete' })
     if (process.connected) process.disconnect()
     // A handle a disposed plugin left open would otherwise keep the Host alive past the shell's graceful
@@ -165,7 +237,32 @@ async function main(): Promise<void> {
   const url = `${ctx.webServer.protocol}//127.0.0.1:${String(ctx.webServer.port)}/`
   const injections = ctx.webServer.collectIndexInjections(admission.peer)
   if (!canPublish()) return
-  process.send?.({ type: 'ready', url, injections }, (error) => { if (error !== null) console.error(error) })
+  if (webExposure.stateFile !== undefined) {
+    const stateFile = webExposure.stateFile
+    ctx.effect(() => () => removeOwnedWebStateFile(stateFile, process.pid), 'desktop-host: web state file')
+  }
+  process.send?.({ type: 'ready', url, injections }, (error) => {
+    if (error !== null) {
+      console.error(error)
+      return
+    }
+    if (webExposure.stateFile === undefined || !canPublish()) return
+    // Electron authenticates with its private IPC cookie and rejects query parameters on
+    // `ready.url`; only the external Web launcher needs the Token provider's entry URLs.
+    const entryUrl = (baseUrl: string): string => {
+      const entries: WebEntryUrl[] = []
+      ctx.emit(ctx.webServer, 'webserver/entry-url', baseUrl, entries)
+      return entries[0]?.url ?? baseUrl
+    }
+    void writeWebStateFile(webExposure.stateFile, {
+      pid: process.pid,
+      ppid: process.ppid,
+      port: ctx.webServer.port,
+      url,
+      localTokenUrl: entryUrl(url),
+      tokenUrl: entryUrl(webExposure.publicUrl ?? url),
+    }).catch((writeError: unknown) => { console.error(writeError) })
+  })
 }
 
 if (import.meta.main) {
