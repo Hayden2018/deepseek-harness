@@ -43,7 +43,17 @@ export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 export function apply(ctx: Context): void {
   const namespace = 'sidebarBrowser'
   const t = ctx.locale.bind(namespace)
+  const carrier = (globalThis as typeof globalThis & {
+    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
+  }).dshDesktop
+  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
+  // A Web carrier has no Electron `<webview>`: its iframe cannot frame most sites
+  // and cannot reach `http://` from an `https:` page, so the type stays off the
+  // guide page there and registers no shortcut. Saved tabs still render and a
+  // delegated chat link still opens one.
+  const definition = browserDefinition(t)
   ctx.inject(['shortcuts'], (ctx) => {
+    if (desktop === undefined) return
     ctx.effect(() => ctx.shortcuts.register({
       id: 'browser.new' as ShortcutCommandId, label: () => t('guide.title'), aliases: ['browser', 'new browser tab'],
       defaults: {
@@ -66,12 +76,15 @@ export function apply(ctx: Context): void {
   })
   const store = createBrowserStore()
   const openTabs = ctx.sidebarRight.openTabs
-  const carrier = (globalThis as typeof globalThis & {
-    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
-  }).dshDesktop
-  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
   ctx.effect(() => ctx.locale.register(namespace, { zh, en, ja, es, fr, de, ru, pt }), 'ui-sidebar-browser.copy')
-  ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    ...definition,
+    // An empty list is how a Web registration stays off the guide page: the
+    // definition's `guide` is optional, so an explicit `undefined` would clash
+    // with `exactOptionalPropertyTypes`.
+    guide: desktop === undefined ? [] : definition.guide ?? [],
+    keepMounted: desktop !== undefined,
+  }), 'ui-sidebar-browser.type')
   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
     const controllers = new Map<BrowserBodyProps['sessionId'], BrowserInjected>()
     scope.effect(() => async () => {
